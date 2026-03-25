@@ -75,9 +75,9 @@ jobs:
         shell: bash
         run: |
           cd lib60870-2.3.5/fast
-          chmod +x ./cs104_server_no_threads ../afl-fuzz
+          chmod +x ./cs104_server_no_threads ../../afl-fuzz
           echo "==== ldd afl-fuzz ===="
-          ldd ../afl-fuzz || true
+          ldd ../../afl-fuzz || true
           echo "==== ldd cs104_server_no_threads ===="
           ldd ./cs104_server_no_threads || true
 
@@ -93,7 +93,7 @@ jobs:
         run: |
           cd lib60870-2.3.5/fast
           mkdir -p logs
-          chmod +x ./cs104_server_no_threads ../afl-fuzz
+          chmod +x ./cs104_server_no_threads ../../afl-fuzz
           export AFL_NO_UI=1
 
           workers="$(nproc)"
@@ -111,7 +111,7 @@ jobs:
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
-            ../afl-fuzz \
+            ../../afl-fuzz \
               -i inputs \
               -o outputs \
               -M out_m0 \
@@ -126,7 +126,7 @@ jobs:
               AFL_AUTORESUME=1 \
               AFL_IMPORT_FIRST=1 \
               AFL_TESTCACHE_SIZE=200 \
-              ../afl-fuzz \
+              ../../afl-fuzz \
                 -i inputs \
                 -o outputs \
                 -S "out_s${i}" \
