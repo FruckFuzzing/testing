@@ -159,8 +159,6 @@ jobs:
               -- ./afl_dnp3_decoder @@ \
             > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
-          
-          done
 
           rc=0
           for pid in "${pids[@]}"; do
