@@ -61,20 +61,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          cd lib60870-2.3.5/fast
+          cd lib60870-2.3.5/slow
           rm -rf outputs
           mkdir -p /tmp/afl-resume
           gh run download "${{ inputs.resume_run_id }}" \
             -n "${{ inputs.resume_artifact_name }}" \
             -D /tmp/afl-resume
-          tar -xzf /tmp/afl-resume/fast-findings.tar.gz
+          tar -xzf /tmp/afl-resume/slow-findings.tar.gz
           test -d outputs/out_m0/queue
           echo "Resumed AFL++ output from run ${{ inputs.resume_run_id }} / artifact ${{ inputs.resume_artifact_name }}"
 
       - name: Check runtime libraries
         shell: bash
         run: |
-          cd lib60870-2.3.5/fast
+          cd lib60870-2.3.5/slow
           chmod +x ./cs104_server_no_threads ../../afl-fuzz
           echo "==== ldd afl-fuzz ===="
           ldd ../../afl-fuzz || true
@@ -91,7 +91,7 @@ jobs:
       - name: Run AFL++ fuzzing on multiple cores
         shell: bash
         run: |
-          cd lib60870-2.3.5/fast
+          cd lib60870-2.3.5/slow
           mkdir -p logs
           chmod +x ./cs104_server_no_threads ../../afl-fuzz
           export AFL_NO_UI=1
@@ -160,7 +160,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          cd lib60870-2.3.5/fast
+          cd lib60870-2.3.5/slow
           echo "===== final fuzzer_stats for all workers ====="
           found=0
           shopt -s nullglob
@@ -189,7 +189,7 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: |
-          cd lib60870-2.3.5/fast
+          cd lib60870-2.3.5/slow
           shopt -s nullglob
           total_unique_crashes=0
           total_crashes=0
@@ -271,7 +271,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          cd lib60870-2.3.5/fast
+          cd lib60870-2.3.5/slow
           if [ -d outputs ]; then
             tar -czf fast-findings.tar.gz outputs
           else
@@ -282,16 +282,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fast-log-seg-${{ inputs.run_segment }}
-          path: lib60870-2.3.5/fast/logs/
+          name: slow-log-seg-${{ inputs.run_segment }}
+          path: lib60870-2.3.5/slow/logs/
           if-no-files-found: warn
 
       - name: Upload fuzzing results archive
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fast-findings-seg-${{ inputs.run_segment }}
-          path: lib60870-2.3.5/fast/fast-findings.tar.gz
+          name: slow-findings-seg-${{ inputs.run_segment }}
+          path: lib60870-2.3.5/slow/slow-findings.tar.gz
           if-no-files-found: warn
 
       - name: Trigger next fuzzing segment
@@ -308,7 +308,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/lib60870_fast.yml/dispatches" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/lib60870_slow.yml/dispatches" \
             -d @- <<EOF
           {
             "ref": "main",
