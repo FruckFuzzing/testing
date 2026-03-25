@@ -68,18 +68,18 @@ jobs:
             -n "${{ inputs.resume_artifact_name }}" \
             -D /tmp/afl-resume
           tar -xzf /tmp/afl-resume/cipster-findings.tar.gz
-          test -d outputs/m0/queue
+          test -d outputs/out_m0/queue
           echo "Resumed AFL++ output from run ${{ inputs.resume_run_id }} / artifact ${{ inputs.resume_artifact_name }}"
 
       - name: Check runtime libraries
         shell: bash
         run: |
-          cd fuzz_git
-          chmod +x ./cipster ../afl-fuzz
+          cd cipster
+          chmod +x ./cipster_afl ../afl-fuzz
           echo "==== ldd afl-fuzz ===="
           ldd ../afl-fuzz || true
-          echo "==== ldd afl_dnp3_outstation ===="
-          ldd ./afl_dnp3_decoder || true
+          echo "==== ldd cipster_afl ===="
+          ldd ./cipster_afl || true
 
       - name: Prepare runner for crash detection
         shell: bash
@@ -91,9 +91,9 @@ jobs:
       - name: Run AFL++ fuzzing on multiple cores
         shell: bash
         run: |
-          cd fuzz_git
+          cd cipster
           mkdir -p logs
-          chmod +x ./afl_dnp3_decoder ../afl-fuzz
+          chmod +x ./cipster_afl ../afl-fuzz
           export AFL_NO_UI=1
 
           workers="$(nproc)"
@@ -115,29 +115,63 @@ jobs:
               -i inputs \
               -o outputs \
               -M out_m0 \
+              -x cipster.dict \
+              -c ./cipster_cmplog \
               -p explore \
-              -P explore \
               -m none \
-              -- ./afl_dnp3_decoder @@ \
+              -- ./cipster_afl @@ \
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
-          for i in $(seq 1 $((workers - 1))); do
-            timeout 21300 env \
-              AFL_AUTORESUME=1 \
-              AFL_IMPORT_FIRST=1 \
-              AFL_TESTCACHE_SIZE=200 \
-              ../afl-fuzz \
-                -i inputs \
-                -o outputs \
-                -S "out_s${i}" \
-                -p explore \
-                -P explore \
-                -m none \
-                -- ./afl_dnp3_decoder @@ \
-              > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
-            pids+=($!)
-          done
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            ../afl-fuzz \
+              -i inputs \
+              -o outputs \
+              -S "out_s1" \
+              -x cipster.dict \
+              -c ./cipster_cmplog \
+              -p fast \
+              -m none \
+              -- ./cipster_afl @@ \
+            > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
+
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            ../afl-fuzz \
+              -i inputs \
+              -o outputs \
+              -S "out_s2" \
+              -x cipster.dict \
+              -c ./cipster_cmplog \
+              -p fast \
+              -P exploit \
+              -m none \
+              -- ./cipster_afl @@ \
+            > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
+
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            ../afl-fuzz \
+              -i inputs \
+              -o outputs \
+              -S "out_s3" \
+              -x cipster.dict \
+              -c ./cipster_cmplog \
+              -p explore \
+              -d \
+              -m none \
+              -- ./cipster_afl @@ \
+            > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
 
           rc=0
           for pid in "${pids[@]}"; do
@@ -162,7 +196,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          cd fuzz_git
+          cd cipster
           echo "===== final fuzzer_stats for all workers ====="
           found=0
           shopt -s nullglob
@@ -191,7 +225,7 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: |
-          cd fuzz_git
+          cd cipster
           shopt -s nullglob
           total_unique_crashes=0
           total_crashes=0
@@ -273,9 +307,9 @@ jobs:
         if: always()
         shell: bash
         run: |
-          cd fuzz_git
+          cd cipster
           if [ -d outputs ]; then
-            tar -czf dnp3-findings.tar.gz outputs
+            tar -czf cipster-findings.tar.gz outputs
           else
             echo "outputs not found, skip packing"
           fi
@@ -284,16 +318,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dnp3-log-seg-${{ inputs.run_segment }}
-          path: fuzz_git/logs/
+          name: cipster-log-seg-${{ inputs.run_segment }}
+          path: cipster/logs/
           if-no-files-found: warn
 
       - name: Upload fuzzing results archive
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dnp3-findings-seg-${{ inputs.run_segment }}
-          path: fuzz_git/dnp3-findings.tar.gz
+          name: cipster-findings-seg-${{ inputs.run_segment }}
+          path: cipster/cipster-findings.tar.gz
           if-no-files-found: warn
 
       - name: Trigger next fuzzing segment
@@ -310,7 +344,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/dnp3_decoder.yml/dispatches" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/cipster.yml/dispatches" \
             -d @- <<EOF
           {
             "ref": "main",
