@@ -1,0 +1,1 @@
+/usr/local/bin/afl-clang-lto++ -O3 -DNDEBUG CMakeFiles/afl_dnp3_protocol.dir/afl_protocol_matrix.cpp.o -o afl_dnp3_protocol  ../dnp3mocks/libdnp3mocks.a ../../lib/libopendnp3.a 

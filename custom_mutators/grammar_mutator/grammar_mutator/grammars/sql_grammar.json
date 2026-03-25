@@ -1,0 +1,155 @@
+{
+    "<START>": [
+        ["<STATEMENTS>"]
+    ],
+    "<STATEMENTS>": [
+        ["<STATEMENT>", ";"]
+    ],
+    "<STATEMENT>": [
+        ["<SELECT>"],
+        ["<INSERT>"],
+        ["<UPDATE>"],
+        ["<DELETE>"],
+        ["<CREATE_TABLE>"]
+    ],
+    "<SELECT>": [
+        ["SELECT ", "<COLUMNS>", " FROM ", "<TABLE>", "<JOIN_CLAUSE>"],
+        ["SELECT ", "<COLUMNS>", " FROM ", "<TABLE>", "<WHERE_CLAUSE>"],
+        ["SELECT ", "<COLUMNS>", " FROM ", "<TABLE>"]
+    ],
+    "<JOIN_CLAUSE>": [
+        ["<JOIN_TYPE>", "<TABLE>", " ON ", "<EXPR>"],
+        ["<JOIN_TYPE>", "<TABLE>", " USING (", "<COLUMNS>", ")"]
+    ],
+    "<JOIN_TYPE>": [
+        [" INNER JOIN "],
+        [" LEFT JOIN "],
+        [" RIGHT JOIN "],
+        [" FULL OUTER JOIN "]
+    ],
+    "<COLUMNS>": [
+        ["* ", "<COLUMNS_1>"],
+        ["<COLUMN>", "<COLUMNS_1>"]
+    ],
+    "<COLUMNS_1>": [
+        [",", "<COLUMN>", "<COLUMNS_1>"],
+        []
+    ],
+    "<COLUMN>": [
+        ["<IDENTIFIER>"],
+        ["<IDENTIFIER>", " AS ", "<IDENTIFIER>"]
+    ],
+    "<TABLE>": [
+        ["<IDENTIFIER>"]
+    ],
+    "<WHERE_CLAUSE>": [
+        [" WHERE ", "<EXPR>"],
+        []
+    ],
+    "<EXPR>": [
+        ["<CONDITION>"],
+        ["(", "<EXPR>", ")"],
+        ["<EXPR>", "<LOGICAL_OP>", "<EXPR>"]
+    ],
+    "<CONDITION>": [
+        ["<COLUMN>", "<COMPARISON_OP>", "<VALUE>"]
+    ],
+    "<COMPARISON_OP>": [
+        [" = "],
+        [" < "],
+        [" > "],
+        [" <= "],
+        [" >= "],
+        [" <> "],
+        [" LIKE "],
+        [" IN "],
+        [" BETWEEN "]
+    ],
+    "<LOGICAL_OP>": [
+        [" AND "],
+        [" OR "]
+    ],
+    "<VALUE>": [
+        ["<NUMBER>"],
+        ["<STRING>"],
+        ["<NULL>"]
+    ],
+    "<INSERT>": [
+        ["INSERT INTO ", "<TABLE>", "(", "<COLUMNS>", ")", " VALUES ", "(", "<VALUES>", ")"]
+    ],
+    "<VALUES>": [
+        ["<VALUE>", ",", "<VALUES>"],
+        ["<VALUE>"]
+    ],
+    "<UPDATE>": [
+        ["UPDATE ", "<TABLE>", " SET ", "<COLUMN>", " = ", "<VALUE>", "<WHERE_CLAUSE>"]
+    ],
+    "<DELETE>": [
+        ["DELETE FROM ", "<TABLE>", "<WHERE_CLAUSE>"]
+    ],
+    "<CREATE_TABLE>": [
+        ["CREATE TABLE ", "<TABLE>", "(", "<COLUMNS_DEFINITION>", ")"]
+    ],
+    "<COLUMNS_DEFINITION>": [
+        ["<COLUMN_DEFINITION>", ",", "<COLUMNS_DEFINITION>"],
+        ["<COLUMN_DEFINITION>"]
+    ],
+    "<COLUMN_DEFINITION>": [
+        ["<IDENTIFIER>", "<DATA_TYPE>", "<CONSTRAINTS>"]
+    ],
+    "<DATA_TYPE>": [
+        [" INT "],
+        [" VARCHAR ", "(", "<NUMBER>", ")"],
+        [" TEXT "],
+        [" BOOLEAN "],
+        [" FLOAT "],
+        [" DOUBLE "],
+        [" DATE "],
+        [" TIME "],
+        [" DATETIME "]
+    ],
+    "<CONSTRAINTS>": [
+        [" PRIMARY KEY ", "<CONSTRAINTS_1>"],
+        [" NOT NULL ", "<CONSTRAINTS_1>"],
+        [" UNIQUE ", "<CONSTRAINTS_1>"],
+        [" DEFAULT ", "<VALUE>", "<CONSTRAINTS_1>"],
+        []
+    ],
+    "<CONSTRAINTS_1>": [
+        ["<CONSTRAINT>", "<CONSTRAINTS_1>"],
+        []
+    ],
+    "<NUMBER>": [
+        ["<DIGITS>"]
+    ],
+    "<DIGITS>": [
+        ["0"], ["1"], ["2"], ["3"], ["4"], ["5"], ["6"], ["7"], ["8"], ["9"]
+    ],
+    "<STRING>": [
+        ["'", "<CHARACTERS>", "'"],
+        ["\"", "<CHARACTERS>", "\""]
+    ],
+    "<CHARACTERS>": [
+        ["<CHARACTER>", "<CHARACTERS_1>"]
+    ],
+    "<CHARACTERS_1>": [
+        ["<CHARACTER>", "<CHARACTERS_1>"],
+        []
+    ],
+    "<CHARACTER>": [
+        ["a"], ["b"], ["c"], ["d"], ["e"], ["f"], ["g"], ["h"], ["i"], ["j"],
+        ["k"], ["l"], ["m"], ["n"], ["o"], ["p"], ["q"], ["r"], ["s"], ["t"],
+        ["u"], ["v"], ["w"], ["x"], ["y"], ["z"],
+        ["A"], ["B"], ["C"], ["D"], ["E"], ["F"], ["G"], ["H"], ["I"], ["J"],
+        ["K"], ["L"], ["M"], ["N"], ["O"], ["P"], ["Q"], ["R"], ["S"], ["T"],
+        ["U"], ["V"], ["W"], ["X"], ["Y"], ["Z"],
+        ["0"], ["1"], ["2"], ["3"], ["4"], ["5"], ["6"], ["7"], ["8"], ["9"],
+        ["_"], ["-"]
+    ],
+    "<NULL>": [
+        ["NULL"]
+    ],
+    "<IDENTIFIER>": [
+        ["<CHARACTERS>"]
+    ]
+}

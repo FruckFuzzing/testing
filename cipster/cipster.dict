@@ -1,0 +1,57 @@
+# EtherNet/IP encapsulation commands
+reg_sess="\x65\x00"
+unreg_sess="\x66\x00"
+rr_data="\x6f\x00"
+unit_data="\x70\x00"
+list_id="\x63\x00"
+list_if="\x64\x00"
+
+# CPF item ids (little-endian)
+null_addr="\x00\x00"
+conn_addr="\xa1\x00"
+conn_data="\xb1\x00"
+unconn_data="\xb2\x00"
+seq_addr="\x02\x80"
+sockaddr_ot="\x00\x80"
+sockaddr_to="\x01\x80"
+
+# Common counts / lengths
+one="\x01\x00"
+two="\x02\x00"
+four="\x04\x00"
+eight="\x08\x00"
+
+# Common CIP services
+get_all="\x01"
+get_single="\x0e"
+set_single="\x10"
+reset="\x05"
+msp="\x0a"
+uc_send="\x52"
+forward_open="\x54"
+large_forward_open="\x5b"
+forward_close="\x4e"
+
+# Logical segments
+class8="\x20"
+inst8="\x24"
+attr8="\x30"
+member8="\x28"
+
+# Common object ids
+identity_cls="\x01"
+msg_router_cls="\x02"
+assembly_cls="\x04"
+conn_mgr_cls="\x06"
+tcpip_cls="\xf5"
+ethlink_cls="\xf6"
+
+# Sample application assembly instances
+asm_100="\x64"
+asm_150="\x96"
+asm_151="\x97"
+asm_154="\x9a"
+
+# Frequently interesting attribute
+attr3="\x03"
+

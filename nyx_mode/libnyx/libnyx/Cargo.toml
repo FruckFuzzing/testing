@@ -1,0 +1,16 @@
+[package]
+name = "libnyx"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "libnyx"
+crate-type = ["lib", "staticlib", "dylib"]
+
+[build-dependencies]
+cbindgen = "0.28.0"
+
+[dependencies]
+config={path="../config"}
+fuzz_runner={path="../fuzz_runner"}
+libc = "0.2"

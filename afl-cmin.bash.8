@@ -1,0 +1,49 @@
+.TH afl-cmin.bash 8 2026-03-21 AFL++
+.SH NAME
+.B afl-cmin.bash
+
+.SH SYNOPSIS
+Usage: ./afl-cmin.bash [ options ] -- /path/to/target_app [ ... ]
+
+.SH OPTIONS
+.nf
+
+Required parameters:
+
+  -i dir        - input directory with the starting corpus
+  -o dir        - output directory for minimized files
+
+Execution control settings:
+
+  -T tasks      - how many parallel processes to create (default=1, "all"=nproc)
+  -f file       - location read by the fuzzed program (default: stdin)
+  -m megs       - memory limit for child process (default=none MB)
+  -t msec       - run time limit for child process (default: 5000ms)
+  -O            - use binary-only instrumentation (FRIDA mode)
+  -Q            - use binary-only instrumentation (QEMU mode)
+  -U            - use unicorn-based instrumentation (Unicorn mode)
+  -X            - use Nyx mode
+  
+Minimization settings:
+
+  -A            - allow crashing and timeout inputs
+  -C            - keep crashing inputs, reject everything else
+  -e            - solve for edge coverage only, ignore hit counts
+
+For additional tips, please consult README.md.
+This script cannot read filenames that end with a space ' '.
+
+Environment variables used:
+AFL_KEEP_TRACES: leave the temporary <out_dir>\.traces directory
+AFL_NO_FORKSRV: run target via execve instead of using the forkserver
+AFL_PATH: last resort location to find the afl-showmap binary
+AFL_SKIP_BIN_CHECK: skip check for target binary
+AFL_CUSTOM_MUTATOR_LIBRARY: custom mutator library (post_process and send)
+AFL_PYTHON_MODULE: custom mutator library (post_process and send)
+
+.SH AUTHOR
+AFL++ was written by Michal "lcamtuf" Zalewski and is maintained by Marc "van Hauser" Heuse <mh@mh-sec.de>, Dominik Maier <domenukk@gmail.com>, Andrea Fioraldi <andreafioraldi@gmail.com> and Heiko "hexcoder-" Eissfeldt <heiko.eissfeldt@hexco.de>
+The homepage of AFL++ is: https://github.com/AFLplusplus/AFLplusplus
+
+.SH LICENSE
+Apache License Version 2.0, January 2004
