@@ -115,27 +115,50 @@ jobs:
               -i inputs \
               -o outputs \
               -M out_m0 \
-              -p explore \
-              -m none \
+              -p exploit \
               -- ./OpENer_afl \
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
-          for i in $(seq 1 $((workers - 1))); do
-            timeout 21300 env \
-              AFL_AUTORESUME=1 \
-              AFL_IMPORT_FIRST=1 \
-              AFL_TESTCACHE_SIZE=200 \
-              ../afl-fuzz \
-                -i inputs \
-                -o outputs \
-                -S "out_s${i}" \
-                -p fast \
-                -m none \
-                -- ./OpENer_afl @@ \
-              > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
-            pids+=($!)
-          done
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            ../afl-fuzz \
+              -i inputs \
+              -o outputs \
+              -S "out_s1" \
+              -p fast \
+              -- ./OpENer_afl \
+            > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
+
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            ../afl-fuzz \
+              -i inputs \
+              -o outputs \
+              -S "out_s2" \
+              -p explore \
+              -- ./OpENer_afl \
+            > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
+
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            ../afl-fuzz \
+              -i inputs \
+              -o outputs \
+              -S "out_s3" \
+              -p coe \
+              -P exploit \
+              -- ./OpENer_afl \
+            > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
 
           rc=0
           for pid in "${pids[@]}"; do
