@@ -67,8 +67,8 @@ jobs:
           gh run download "${{ inputs.resume_run_id }}" \
             -n "${{ inputs.resume_artifact_name }}" \
             -D /tmp/afl-resume
-          tar -xzf /tmp/afl-resume/OpENer-findings.tar.gz
-          test -d outputs/main-opener/queue
+          tar -xzf /tmp/afl-resume/opener-findings.tar.gz
+          test -d outputs/out_m0/queue
           echo "Resumed AFL++ output from run ${{ inputs.resume_run_id }} / artifact ${{ inputs.resume_artifact_name }}"
 
       - name: Check runtime libraries
@@ -114,51 +114,28 @@ jobs:
             ../afl-fuzz \
               -i inputs \
               -o outputs \
-              -M main-opener \
-              -p exploit \
+              -M out_m0 \
+              -p explore \
+              -m none \
               -- ./OpENer_afl \
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
-          timeout 21300 env \
-            AFL_AUTORESUME=1 \
-            AFL_IMPORT_FIRST=1 \
-            AFL_TESTCACHE_SIZE=200 \
-            ../afl-fuzz \
-              -i inputs \
-              -o outputs \
-              -S sec1 \
-              -p fast \
-              -- ./OpENer_afl \
-            > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
-          pids+=($!)
-
-          timeout 21300 env \
-            AFL_AUTORESUME=1 \
-            AFL_IMPORT_FIRST=1 \
-            AFL_TESTCACHE_SIZE=200 \
-            ../afl-fuzz \
-              -i inputs \
-              -o outputs \
-              -S "sec2" \
-              -p explore \
-              -- ./OpENer_afl \
-            > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
-          pids+=($!)
-
-          timeout 21300 env \
-            AFL_AUTORESUME=1 \
-            AFL_IMPORT_FIRST=1 \
-            AFL_TESTCACHE_SIZE=200 \
-            ../afl-fuzz \
-              -i inputs \
-              -o outputs \
-              -S "sec3" \
-              -p coe \
-              -P exploit \
-              -- ./afl_dnp3_decoder @@ \
-            > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
-          pids+=($!)
+          for i in $(seq 1 $((workers - 1))); do
+            timeout 21300 env \
+              AFL_AUTORESUME=1 \
+              AFL_IMPORT_FIRST=1 \
+              AFL_TESTCACHE_SIZE=200 \
+              ../afl-fuzz \
+                -i inputs \
+                -o outputs \
+                -S "out_s${i}" \
+                -p fast \
+                -m none \
+                -- ./OpENer_afl @@ \
+              > "logs/afl-fuzz-out_s${i}-seg-${{ inputs.run_segment }}.log" 2>&1 &
+            pids+=($!)
+          done
 
           rc=0
           for pid in "${pids[@]}"; do
@@ -172,24 +149,22 @@ jobs:
 
           set -e
 
-          if [ -f outputs/main-opener/plot_data ]; then
+          if [ -f outputs/out_m0/plot_data ]; then
             echo "===== master plot_data tail ====="
-            tail -n 20 outputs/main-opener/plot_data | tee "logs/plot_data_tail-seg-${{ inputs.run_segment }}.log"
+            tail -n 20 outputs/out_m0/plot_data | tee "logs/plot_data_tail-seg-${{ inputs.run_segment }}.log"
           fi
 
           exit "$rc"
 
       - name: Print final fuzzer_stats for all workers
-        continue-on-error: true
         if: always()
         shell: bash
         run: |
           cd OpENer
           echo "===== final fuzzer_stats for all workers ====="
           found=0
-          cat main-opener/fuzzer_stats
           shopt -s nullglob
-          for stats in outputs/sec*/fuzzer_stats; do
+          for stats in outputs/out_*/fuzzer_stats; do
             found=1
             worker_dir="$(dirname "$stats")"
             worker_name="$(basename "$worker_dir")"
@@ -198,7 +173,7 @@ jobs:
             echo
           done
           if [ "$found" -eq 0 ]; then
-            echo "No outputs/sec*/fuzzer_stats found"
+            echo "No outputs/out_*/fuzzer_stats found"
           fi
       
       - name: Alert by email when crashes found
@@ -220,7 +195,7 @@ jobs:
           total_crashes=0
           found_stats=0
           summary_file="$(mktemp)"
-          for stats in outputs/sec*/fuzzer_stats; do
+          for stats in outputs/out_*/fuzzer_stats; do
             found_stats=1
             worker_dir="$(dirname "$stats")"
             worker_name="$(basename "$worker_dir")"
@@ -298,7 +273,7 @@ jobs:
         run: |
           cd OpENer
           if [ -d outputs ]; then
-            tar -czf OpENer-findings.tar.gz outputs
+            tar -czf opener-findings.tar.gz outputs
           else
             echo "outputs not found, skip packing"
           fi
@@ -307,7 +282,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OpENer-log-seg-${{ inputs.run_segment }}
+          name: opener-log-seg-${{ inputs.run_segment }}
           path: OpENer/logs/
           if-no-files-found: warn
 
@@ -315,8 +290,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OpENer-findings-seg-${{ inputs.run_segment }}
-          path: OpENer/OpENer-findings.tar.gz
+          name: opener-findings-seg-${{ inputs.run_segment }}
+          path: OpENer/opener-findings.tar.gz
           if-no-files-found: warn
 
       - name: Trigger next fuzzing segment
@@ -326,14 +301,14 @@ jobs:
         shell: bash
         run: |
           next_segment=$(( ${{ inputs.run_segment }} + 1 ))
-          current_artifact="OpENer-findings-seg-${{ inputs.run_segment }}"
+          current_artifact="opener-findings-seg-${{ inputs.run_segment }}"
 
           curl -fsSL \
             -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/OpENer.yml/dispatches" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/opener.yml/dispatches" \
             -d @- <<EOF
           {
             "ref": "main",
