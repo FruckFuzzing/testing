@@ -273,7 +273,7 @@ jobs:
         run: |
           cd lib60870-2.3.5/slow
           if [ -d outputs ]; then
-            tar -czf fast-findings.tar.gz outputs
+            tar -czf slow-findings.tar.gz outputs
           else
             echo "outputs not found, skip packing"
           fi
