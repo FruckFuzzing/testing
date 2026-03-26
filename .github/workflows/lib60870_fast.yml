@@ -301,7 +301,7 @@ jobs:
         shell: bash
         run: |
           next_segment=$(( ${{ inputs.run_segment }} + 1 ))
-          current_artifact="dnp3-findings-seg-${{ inputs.run_segment }}"
+          current_artifact="fast-findings-seg-${{ inputs.run_segment }}"
 
           curl -fsSL \
             -X POST \
