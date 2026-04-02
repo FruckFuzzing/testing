@@ -1,0 +1,436 @@
+name: lib60870-240 # 与实际文件名无关，在Actions页面展示名，硬编码
+
+run-name: lib60870-240 fuzzing [${{ inputs.run_segment }}/${{ inputs.max_segments }}] on ${{ inputs.target_branch }}
+# run-name: 任务运行时显示名，没法使用env，可以使用Github支持的全局变量
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: "Branch to fuzz"
+        required: true
+        default: "main"
+        type: string
+
+      run_segment:
+        description: "Current fuzzing segment number"
+        required: true
+        default: "1"
+        type: string
+
+      max_segments:
+        description: "Maximum number of chained fuzzing segments"
+        required: true
+        default: "16"
+        type: string
+
+      resume_run_id:
+        description: "Previous workflow run ID used for AFL resume"
+        required: false
+        default: ""
+        type: string
+
+      resume_artifact_name:
+        description: "Artifact name that contains previous AFL outputs"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+env:
+  WORKFLOW_LABEL: lib60870-240
+  TARGET_LABEL: lib60870-240
+  MAIL_SUBJECT_PREFIX: "[AFL Alert]"
+
+  FUZZ_DIR: lib60870-240
+  TARGET_BIN: ./cs104_server
+  AFL_FUZZ_PATH: ../afl-fuzz
+  OUTPUT_DIR: outputs # 方便发邮件的引用变量
+  LOG_DIR: logs
+
+  RESULT_ARCHIVE_PREFIX: lib60870-240-findings # outputs打包压缩包前缀
+  LOG_ARTIFACT_PREFIX: lib60870-240-log # bash命令输出文件前缀
+
+  WORKFLOW_DISPATCH_FILE: lib60870-240.yml # 下一次运行的yml名
+  DISPATCH_REF: main
+
+  ALERT_GH_USER: gff-cw # 使用issue通知谁
+
+jobs:
+  fuzzing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+
+      - name: Install runtime libraries for target and AFL++
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3.12 \
+            libpython3.12t64 \
+            libstdc++6 \
+            libgcc-s1
+          sudo ldconfig
+
+      - name: Restore AFL++ state from previous segment
+        if: ${{ inputs.resume_run_id != '' && inputs.resume_artifact_name != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          archive_file="${RESULT_ARCHIVE_PREFIX}.tar.gz"
+
+          cd "${FUZZ_DIR}"
+          rm -rf outputs
+          mkdir -p /tmp/afl-resume
+
+          gh run download "${{ inputs.resume_run_id }}" \
+            -n "${{ inputs.resume_artifact_name }}" \
+            -D /tmp/afl-resume
+
+          tar -xzf "/tmp/afl-resume/${archive_file}"
+
+          # 恢复后做一个最基本的目录检查
+          test -d "outputs/out_m0/queue"
+
+          echo "Resumed AFL++ output from run ${{ inputs.resume_run_id }} / artifact ${{ inputs.resume_artifact_name }}"
+
+      - name: Check runtime libraries
+        shell: bash
+        run: |
+          cd "${FUZZ_DIR}"
+
+          chmod +x "${TARGET_BIN}" "${AFL_FUZZ_PATH}"
+
+          echo "==== ldd afl-fuzz (${AFL_FUZZ_PATH}) ===="
+          ldd "${AFL_FUZZ_PATH}" || true
+
+          echo "==== ldd target binary (${TARGET_BIN}) ===="
+          ldd "${TARGET_BIN}" || true
+
+      - name: Prepare runner for crash detection
+        shell: bash
+        run: |
+          echo "Before: $(cat /proc/sys/kernel/core_pattern)"
+          sudo sysctl -w kernel.core_pattern=core
+          echo "After:  $(cat /proc/sys/kernel/core_pattern)"
+
+      - name: Record baseline crash count
+        id: baseline
+        shell: bash
+        run: |
+          cd "${FUZZ_DIR}"
+          baseline_crashes=0
+          if [ -d "outputs" ]; then
+            # 统计所有 worker 的 crashes 文件夹中的文件数（排除 README.txt）
+            baseline_crashes=$(find outputs/out_*/crashes -maxdepth 1 -type f ! -name 'README.txt' 2>/dev/null | wc -l || echo 0)
+          fi
+          echo "BASELINE_CRASHES=${baseline_crashes}" >> $GITHUB_ENV
+          echo "Baseline crashes before fuzzing: ${baseline_crashes}"
+
+      - name: Run AFL++ fuzzing on multiple cores
+        shell: bash
+        run: |
+          cd "${FUZZ_DIR}"
+          mkdir -p "${LOG_DIR}"
+          chmod +x "${TARGET_BIN}" "${AFL_FUZZ_PATH}"
+
+          export AFL_NO_UI=1
+
+          workers="$(nproc)"
+          if [ "$workers" -lt 2 ]; then
+            workers=2
+          fi
+
+          echo "Launching $workers AFL++ workers on the same VM"
+
+          pids=()
+
+          set +e
+
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_FINAL_SYNC=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            "${AFL_FUZZ_PATH}" \
+              -i inputs \
+              -o outputs \
+              -M out_m0 \
+              -p explore \
+              -P explore \
+              -m none \
+              -- "${TARGET_BIN}" @@ \
+            > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
+
+
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            AFL_DISABLE_TRIM=1 \
+            "${AFL_FUZZ_PATH}" \
+              -i inputs \
+              -o outputs \
+              -S "out_s1" \
+              -p fast \
+              -P explore \
+              -m none \
+              -- "${TARGET_BIN}" @@ \
+            > "logs/afl-fuzz-out_s1-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
+
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            AFL_DISABLE_TRIM=1 \
+            "${AFL_FUZZ_PATH}" \
+              -i inputs \
+              -o outputs \
+              -S "out_s2" \
+              -p exploite \
+              -P explore \
+              -m none \
+              -L 0 \
+              -- "${TARGET_BIN}" @@ \
+            > "logs/afl-fuzz-out_s2-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
+
+          timeout 21300 env \
+            AFL_AUTORESUME=1 \
+            AFL_IMPORT_FIRST=1 \
+            AFL_TESTCACHE_SIZE=200 \
+            "${AFL_FUZZ_PATH}" \
+              -i inputs \
+              -o outputs \
+              -S "out_s3" \
+              -p coe \
+              -P 300 \
+              -m none \
+              -- "${TARGET_BIN}" @@ \
+            > "logs/afl-fuzz-out_s3-seg-${{ inputs.run_segment }}.log" 2>&1 &
+          pids+=($!)
+
+
+          rc=0
+          for pid in "${pids[@]}"; do
+            wait "$pid"
+            one_rc=$?
+            echo "worker pid=$pid exit code=$one_rc"
+            if [ "$one_rc" -ne 0 ] && [ "$one_rc" -ne 124 ]; then
+              rc="$one_rc"
+            fi
+          done
+
+          set -e
+
+          if [ -f outputs/out_m0/plot_data ]; then
+            echo "===== master plot_data tail ====="
+            tail -n 20 outputs/out_m0/plot_data | tee "logs/plot_data_tail-seg-${{ inputs.run_segment }}.log"
+          fi
+
+          exit "$rc"
+
+      - name: Print final fuzzer_stats for all workers
+        if: always()
+        shell: bash
+        run: |
+          cd "${FUZZ_DIR}"
+
+          echo "===== final fuzzer_stats for all workers ====="
+          found=0
+          shopt -s nullglob
+
+          for stats in "outputs"/out_*/fuzzer_stats; do
+            found=1
+            worker_dir="$(dirname "${stats}")"
+            worker_name="$(basename "${worker_dir}")"
+
+            echo "===== ${worker_name} ====="
+            cat "${stats}"
+            echo
+          done
+
+          if [ "${found}" -eq 0 ]; then
+            echo "No outputs/out_*/fuzzer_stats found"
+          fi
+
+      - name: Alert GitHub user when NEW crashes found
+        continue-on-error: true
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          RUN_NO: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ALERT_GH_USER: ${{ env.ALERT_GH_USER }}
+        run: |
+          cd "${FUZZ_DIR}"
+
+          # 1. 统计当前最新的崩溃文件总数
+          total_crashes_now=$(find "${OUTPUT_DIR}"/out_*/crashes -maxdepth 1 -type f ! -name 'README.txt' 2>/dev/null | wc -l || echo 0)
+          
+          # 2. 读取之前记录的基线并计算增量
+          baseline=${BASELINE_CRASHES:-0}
+          new_crashes=$((total_crashes_now - baseline))
+
+          echo "Baseline crashes: ${baseline}"
+          echo "Total crashes now: ${total_crashes_now}"
+          echo "NEW crashes found in this segment: ${new_crashes}"
+
+          # 3. 如果没有新崩溃，直接退出，不发 Issue
+          if [ "${new_crashes}" -le 0 ]; then
+            echo "No NEW crashes found. Skipping GitHub alert."
+            exit 0
+          fi
+
+          # 4. 准备 Issue 内容，标注清晰的标识符
+          issue_title="${MAIL_SUBJECT_PREFIX} ${WORKFLOW_LABEL} found ${new_crashes} NEW crashes (Run #${RUN_NO}, Seg ${{ inputs.run_segment }})"
+          issue_body_file="$(mktemp)"
+
+          {
+            echo "🚨 **AFL++ Detected NEW Crashes!**"
+            if [ -n "${ALERT_GH_USER}" ]; then
+              echo "@${ALERT_GH_USER}"
+            fi
+            echo
+            echo "### Fuzzing Segment Details"
+            echo "- **Workflow:** ${WORKFLOW_NAME} (\`${WORKFLOW_LABEL}\`)"
+            echo "- **Run Sequence:** #${RUN_NO}"
+            echo "- **Segment Progress:** ${{ inputs.run_segment }} / ${{ inputs.max_segments }}"
+            echo "- **Target:** ${TARGET_LABEL}"
+            echo "- **New Crashes Discovered:** **${new_crashes}**"
+            echo "- **Cumulative Total Crashes:** ${total_crashes_now}"
+            echo "- [**View GitHub Action Run Here**](${RUN_URL})"
+            echo
+            echo "Please download the \`${RESULT_ARCHIVE_PREFIX}-seg-${{ inputs.run_segment }}\` artifact from the run page to inspect the \`crashes\` directory."
+          } > "${issue_body_file}"
+
+          export ISSUE_TITLE="${issue_title}"
+          export ISSUE_BODY_FILE="${issue_body_file}"
+
+          # 5. 调用 GitHub API 发布 Issue
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.request
+          import urllib.error
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          assignee = os.environ.get("ALERT_GH_USER", "").strip()
+          title = os.environ["ISSUE_TITLE"]
+
+          with open(os.environ["ISSUE_BODY_FILE"], "r", encoding="utf-8") as f:
+              body = f.read()
+
+          def create_issue(payload):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/issues",
+                  data=json.dumps(payload).encode("utf-8"),
+                  method="POST",
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "Content-Type": "application/json; charset=utf-8",
+                  },
+              )
+              with urllib.request.urlopen(req) as resp:
+                  print(f"Created GitHub issue successfully, status={resp.status}")
+
+          payload = {
+              "title": title,
+              "body": body,
+          }
+
+          if assignee:
+              payload["assignees"] = [assignee]
+
+          try:
+              create_issue(payload)
+          except urllib.error.HTTPError as e:
+              err = e.read().decode("utf-8", errors="replace")
+              print(err, file=sys.stderr)
+              if e.code == 422 and "assignees" in payload:
+                  payload.pop("assignees", None)
+                  create_issue(payload)
+              else:
+                  raise
+          PY
+
+      - name: Pack fuzzing results
+        if: always()
+        shell: bash
+        run: |
+          archive_file="${RESULT_ARCHIVE_PREFIX}.tar.gz"
+
+          cd "${FUZZ_DIR}"
+
+          if [ -d "outputs" ]; then
+            tar -czf "${archive_file}" "outputs"
+            echo "Packed archive: ${archive_file}"
+          else
+            echo "outputs not found, skip packing"
+          fi
+
+      - name: Upload fuzzing log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.LOG_ARTIFACT_PREFIX }}-seg-${{ inputs.run_segment }}
+          path: ${{ env.FUZZ_DIR }}/${{ env.LOG_DIR }}/
+          if-no-files-found: warn
+
+      - name: Upload fuzzing results archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RESULT_ARCHIVE_PREFIX }}-seg-${{ inputs.run_segment }}
+          path: ${{ env.FUZZ_DIR }}/${{ env.RESULT_ARCHIVE_PREFIX }}.tar.gz
+          if-no-files-found: warn
+
+      - name: Trigger next fuzzing segment
+        if: ${{ success() && fromJSON(inputs.run_segment) < fromJSON(inputs.max_segments) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          next_segment=$(( ${{ inputs.run_segment }} + 1 ))
+          current_artifact="${RESULT_ARCHIVE_PREFIX}-seg-${{ inputs.run_segment }}"
+
+          echo "Trigger next segment: ${next_segment}"
+          echo "Dispatch workflow file: ${WORKFLOW_DISPATCH_FILE}"
+          echo "Dispatch ref: ${DISPATCH_REF}"
+
+          curl -fsSL \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${WORKFLOW_DISPATCH_FILE}/dispatches" \
+            -d @- <<EOF
+          {
+            "ref": "${DISPATCH_REF}",
+            "inputs": {
+              "target_branch": "${{ inputs.target_branch }}",
+              "run_segment": "${next_segment}",
+              "max_segments": "${{ inputs.max_segments }}",
+              "resume_run_id": "${{ github.run_id }}",
+              "resume_artifact_name": "${current_artifact}"
+            }
+          }
+          EOF
