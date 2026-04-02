@@ -20,7 +20,7 @@ on:
       max_segments:
         description: "Maximum number of chained fuzzing segments"
         required: true
-        default: "16"
+        default: "60"
         type: string
 
       resume_run_id:
@@ -199,7 +199,7 @@ jobs:
               -i inputs \
               -o outputs \
               -S "out_s2" \
-              -p exploite \
+              -p exploit \
               -P explore \
               -m none \
               -L 0 \
