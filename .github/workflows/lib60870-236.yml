@@ -54,7 +54,7 @@ env:
   RESULT_ARCHIVE_PREFIX: lib60870-236-findings # outputs打包压缩包前缀
   LOG_ARTIFACT_PREFIX: lib60870-236-log # bash命令输出文件前缀
 
-  WORKFLOW_DISPATCH_FILE: lib60870-236-1.6.0.yml # 下一次运行的yml名
+  WORKFLOW_DISPATCH_FILE: lib60870-236.yml # 下一次运行的yml名
   DISPATCH_REF: main
 
   ALERT_GH_USER: gff-cw # 使用issue通知谁
