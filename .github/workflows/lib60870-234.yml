@@ -169,7 +169,7 @@ jobs:
               -p explore \
               -P explore \
               -m none \
-              -- "${TARGET_BIN}" @@ \
+              -- "${TARGET_BIN}" 8101 \
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
@@ -186,7 +186,7 @@ jobs:
               -p fast \
               -P explore \
               -m none \
-              -- "${TARGET_BIN}" @@ \
+              -- "${TARGET_BIN}" 8102 \
             > "logs/afl-fuzz-out_s1-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
@@ -203,7 +203,7 @@ jobs:
               -P explore \
               -m none \
               -L 0 \
-              -- "${TARGET_BIN}" @@ \
+              -- "${TARGET_BIN}" 8103 \
             > "logs/afl-fuzz-out_s2-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
