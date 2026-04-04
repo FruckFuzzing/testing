@@ -218,7 +218,7 @@ jobs:
               -p coe \
               -P 300 \
               -m none \
-              -- "${TARGET_BIN}" @@ \
+              -- "${TARGET_BIN}" 8104 \
             > "logs/afl-fuzz-out_s3-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
