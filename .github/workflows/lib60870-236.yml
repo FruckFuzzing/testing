@@ -45,11 +45,11 @@ env:
   TARGET_LABEL: lib60870-236
   MAIL_SUBJECT_PREFIX: "[AFL Alert]"
 
-  FUZZ_DIR: lib60870-236/ib60870-236
+  FUZZ_DIR: lib60870-236
   TARGET_BIN: ./cs104_server
   CMPLOG_BIN: ./cs104_server.cmplog
   DICT_NAME: lib.dict
-  AFL_FUZZ_PATH: ../../afl-fuzz
+  AFL_FUZZ_PATH: ../afl-fuzz
   OUTPUT_DIR: outputs # 方便发邮件的引用变量
   LOG_DIR: logs
 
