@@ -20,7 +20,7 @@ on:
       max_segments:
         description: "Maximum number of chained fuzzing segments"
         required: true
-        default: "60"
+        default: "100"
         type: string
 
       resume_run_id:
@@ -47,6 +47,8 @@ env:
 
   FUZZ_DIR: lib60870-236
   TARGET_BIN: ./cs104_server
+  CMPLOG_BIN: ./cs104_server.cmplog
+  DICT_NAME: lib.dict
   AFL_FUZZ_PATH: ../afl-fuzz
   OUTPUT_DIR: outputs # 方便发邮件的引用变量
   LOG_DIR: logs
@@ -132,7 +134,7 @@ jobs:
           baseline_crashes=0
           if [ -d "outputs" ]; then
             # 统计所有 worker 的 crashes 文件夹中的文件数（排除 README.txt）
-            baseline_crashes=$(find outputs/out_*/crashes -maxdepth 1 -type f ! -name 'README.txt' 2>/dev/null | wc -l || echo 0)
+            baseline_crashes=$(find outputs/out_*/crashes -maxdepth 1 -type f ! -name 'README.txt' 2>/dev/null | wc -l || true)
           fi
           echo "BASELINE_CRASHES=${baseline_crashes}" >> $GITHUB_ENV
           echo "Baseline crashes before fuzzing: ${baseline_crashes}"
@@ -167,26 +169,27 @@ jobs:
               -o outputs \
               -M out_m0 \
               -p explore \
-              -P explore \
+              -x "${DICT_NAME}" \
               -m none \
-              -- "${TARGET_BIN}" @@ \
+              -- "${TARGET_BIN}" 8101 \
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
 
           timeout 21300 env \
             AFL_AUTORESUME=1 \
+            AFL_CMPLOG_ONLY_NEW=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
-            AFL_DISABLE_TRIM=1 \
             "${AFL_FUZZ_PATH}" \
               -i inputs \
               -o outputs \
               -S "out_s1" \
               -p fast \
-              -P explore \
+              -x "${DICT_NAME}" \
+              -c "${CMPLOG_BIN}" \
               -m none \
-              -- "${TARGET_BIN}" @@ \
+              -- "${TARGET_BIN}" 8102\
             > "logs/afl-fuzz-out_s1-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
@@ -200,10 +203,10 @@ jobs:
               -o outputs \
               -S "out_s2" \
               -p exploit \
-              -P explore \
+              -x "${DICT_NAME}" \
               -m none \
               -L 0 \
-              -- "${TARGET_BIN}" @@ \
+              -- "${TARGET_BIN}" 8103\
             > "logs/afl-fuzz-out_s2-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
@@ -211,14 +214,15 @@ jobs:
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
+            AFL_DISABLE_TRIM=1 \
             "${AFL_FUZZ_PATH}" \
               -i inputs \
               -o outputs \
               -S "out_s3" \
               -p coe \
-              -P 300 \
+              -x "${DICT_NAME}" \
               -m none \
-              -- "${TARGET_BIN}" @@ \
+              -- "${TARGET_BIN}" 8104\
             > "logs/afl-fuzz-out_s3-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
