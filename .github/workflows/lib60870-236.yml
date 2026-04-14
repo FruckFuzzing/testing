@@ -1,7 +1,7 @@
-name: lib60870-236 # 与实际文件名无关，在Actions页面展示名，硬编码
+name: lib60870-236
 
 run-name: lib60870-236 fuzzing [${{ inputs.run_segment }}/${{ inputs.max_segments }}] on ${{ inputs.target_branch }}
-# run-name: 任务运行时显示名，没法使用env，可以使用Github支持的全局变量
+
 on:
   workflow_dispatch:
     inputs:
@@ -20,7 +20,7 @@ on:
       max_segments:
         description: "Maximum number of chained fuzzing segments"
         required: true
-        default: "100"
+        default: "140"
         type: string
 
       resume_run_id:
@@ -48,18 +48,20 @@ env:
   FUZZ_DIR: lib60870-236
   TARGET_BIN: ./cs104_server
   CMPLOG_BIN: ./cs104_server.cmplog
+  ASAN_BIN: ./server_asan
   DICT_NAME: lib.dict
   AFL_FUZZ_PATH: ../afl-fuzz
-  OUTPUT_DIR: outputs # 方便发邮件的引用变量
+  OUTPUT_DIR: outputs
   LOG_DIR: logs
+  KNOWN_SUMMARIES_FILE: outputs/asan_known_summaries.txt
 
-  RESULT_ARCHIVE_PREFIX: lib60870-236-findings # outputs打包压缩包前缀
-  LOG_ARTIFACT_PREFIX: lib60870-236-log # bash命令输出文件前缀
+  RESULT_ARCHIVE_PREFIX: lib60870-236-findings
+  LOG_ARTIFACT_PREFIX: lib60870-236-log
 
-  WORKFLOW_DISPATCH_FILE: lib60870-236.yml # 下一次运行的yml名
+  WORKFLOW_DISPATCH_FILE: lib60870-236.yml
   DISPATCH_REF: main
 
-  ALERT_GH_USER: gff-cw # 使用issue通知谁
+  ALERT_GH_USER: gff-cw
 
 jobs:
   fuzzing:
@@ -80,7 +82,8 @@ jobs:
             python3.12 \
             libpython3.12t64 \
             libstdc++6 \
-            libgcc-s1
+            libgcc-s1 \
+            libasan8
           sudo ldconfig
 
       - name: Restore AFL++ state from previous segment
@@ -101,7 +104,6 @@ jobs:
 
           tar -xzf "/tmp/afl-resume/${archive_file}"
 
-          # 恢复后做一个最基本的目录检查
           test -d "outputs/out_m0/queue"
 
           echo "Resumed AFL++ output from run ${{ inputs.resume_run_id }} / artifact ${{ inputs.resume_artifact_name }}"
@@ -111,7 +113,7 @@ jobs:
         run: |
           cd "${FUZZ_DIR}"
 
-          chmod +x "${TARGET_BIN}" "${AFL_FUZZ_PATH}"
+          chmod +x "${TARGET_BIN}" "${CMPLOG_BIN}" "${ASAN_BIN}" "${AFL_FUZZ_PATH}"
 
           echo "==== ldd afl-fuzz (${AFL_FUZZ_PATH}) ===="
           ldd "${AFL_FUZZ_PATH}" || true
@@ -119,25 +121,15 @@ jobs:
           echo "==== ldd target binary (${TARGET_BIN}) ===="
           ldd "${TARGET_BIN}" || true
 
+          echo "==== ldd ASAN binary (${ASAN_BIN}) ===="
+          ldd "${ASAN_BIN}" || true
+
       - name: Prepare runner for crash detection
         shell: bash
         run: |
           echo "Before: $(cat /proc/sys/kernel/core_pattern)"
           sudo sysctl -w kernel.core_pattern=core
           echo "After:  $(cat /proc/sys/kernel/core_pattern)"
-
-      - name: Record baseline crash count
-        id: baseline
-        shell: bash
-        run: |
-          cd "${FUZZ_DIR}"
-          baseline_crashes=0
-          if [ -d "outputs" ]; then
-            # 统计所有 worker 的 crashes 文件夹中的文件数（排除 README.txt）
-            baseline_crashes=$(find outputs/out_*/crashes -maxdepth 1 -type f ! -name 'README.txt' 2>/dev/null | wc -l || true)
-          fi
-          echo "BASELINE_CRASHES=${baseline_crashes}" >> $GITHUB_ENV
-          echo "Baseline crashes before fuzzing: ${baseline_crashes}"
 
       - name: Run AFL++ fuzzing on multiple cores
         shell: bash
@@ -171,10 +163,9 @@ jobs:
               -p explore \
               -x "${DICT_NAME}" \
               -m none \
-              -- "${TARGET_BIN}" 8101 \
+              -- "${TARGET_BIN}" 8101\
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
-
 
           timeout 21300 env \
             AFL_AUTORESUME=1 \
@@ -184,7 +175,7 @@ jobs:
             "${AFL_FUZZ_PATH}" \
               -i inputs \
               -o outputs \
-              -S "out_s1" \
+              -S out_s1 \
               -p fast \
               -x "${DICT_NAME}" \
               -c "${CMPLOG_BIN}" \
@@ -201,7 +192,7 @@ jobs:
             "${AFL_FUZZ_PATH}" \
               -i inputs \
               -o outputs \
-              -S "out_s2" \
+              -S out_s2 \
               -p exploit \
               -x "${DICT_NAME}" \
               -m none \
@@ -218,14 +209,13 @@ jobs:
             "${AFL_FUZZ_PATH}" \
               -i inputs \
               -o outputs \
-              -S "out_s3" \
+              -S out_s3 \
               -p coe \
               -x "${DICT_NAME}" \
               -m none \
               -- "${TARGET_BIN}" 8104\
             > "logs/afl-fuzz-out_s3-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
-
 
           rc=0
           for pid in "${pids[@]}"; do
@@ -246,11 +236,14 @@ jobs:
 
           exit "$rc"
 
-      - name: Print final fuzzer_stats for all workers
+      - name: Print final fuzzer_stats for all workers and classify crashes
         if: always()
         shell: bash
+        env:
+          ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:halt_on_error=1:symbolize=1"
         run: |
           cd "${FUZZ_DIR}"
+          mkdir -p "${LOG_DIR}" "$(dirname "${KNOWN_SUMMARIES_FILE}")"
 
           echo "===== final fuzzer_stats for all workers ====="
           found=0
@@ -270,7 +263,84 @@ jobs:
             echo "No outputs/out_*/fuzzer_stats found"
           fi
 
-      - name: Alert GitHub user when NEW crashes found
+          echo "===== ASAN deduplicated crash summary ====="
+          python3 ../classify_asan_crashes.py \
+            --program "${ASAN_BIN}" \
+            --timeout 30 \
+            --output-json "${LOG_DIR}/asan_unique_report.json" \
+            --output-text "${LOG_DIR}/asan_unique_summary.txt" \
+            --details-dir "${LOG_DIR}/asan_details" \
+            --known-summaries-file "${KNOWN_SUMMARIES_FILE}" \
+            --arg lo \
+            "outputs/out_m0/crashes" \
+            "outputs/out_s1/crashes" \
+            "outputs/out_s2/crashes" \
+            "outputs/out_s3/crashes"
+
+          python3 - <<'PY'
+          import json
+          import os
+
+          log_dir = os.environ["LOG_DIR"]
+          report_path = os.path.join(log_dir, "asan_unique_report.json")
+          env_path = os.environ["GITHUB_ENV"]
+
+          defaults = {
+              "ASAN_TOTAL_CRASH_SEEDS": 0,
+              "ASAN_UNIQUE_BUG_COUNT": 0,
+              "ASAN_NEW_UNIQUE_BUG_COUNT": 0,
+              "ASAN_KNOWN_UNIQUE_BUG_COUNT": 0,
+              "ASAN_DUPLICATE_COUNT": 0,
+              "ASAN_NO_OUTPUT_COUNT": 0,
+              "ASAN_NO_SUMMARY_WITH_OUTPUT_COUNT": 0,
+              "ASAN_TIMEOUT_COUNT": 0,
+              "ASAN_ERROR_COUNT": 0,
+              "ASAN_SHOULD_CREATE_ISSUE": 0,
+          }
+
+          if not os.path.exists(report_path):
+              with open(env_path, "a", encoding="utf-8") as f:
+                  for k, v in defaults.items():
+                      f.write(f"{k}={v}\n")
+              raise SystemExit(0)
+
+          with open(report_path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          def read_detail_log_text(path: str) -> str:
+            if not path:
+                return ""
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    return f.read().rstrip()
+            except Exception as e:
+                return f"[failed to read ASAN detail log: {e}]"
+
+          new_unique_bug_count = int(data.get("new_unique_bug_count", 0))
+          timeout_count = int(data.get("timeout_count", 0))
+          no_output_count = int(data.get("no_output_count", 0))
+
+          should_create_issue = 1 if (new_unique_bug_count > 0 or timeout_count > 0 or no_output_count > 0) else 0
+
+          values = {
+              "ASAN_TOTAL_CRASH_SEEDS": int(data.get("total_seed_files", 0)),
+              "ASAN_UNIQUE_BUG_COUNT": int(data.get("unique_bug_count", 0)),
+              "ASAN_NEW_UNIQUE_BUG_COUNT": new_unique_bug_count,
+              "ASAN_KNOWN_UNIQUE_BUG_COUNT": int(data.get("known_unique_bug_count", 0)),
+              "ASAN_DUPLICATE_COUNT": int(data.get("duplicate_count", 0)),
+              "ASAN_NO_OUTPUT_COUNT": no_output_count,
+              "ASAN_NO_SUMMARY_WITH_OUTPUT_COUNT": int(data.get("no_summary_with_output_count", 0)),
+              "ASAN_TIMEOUT_COUNT": timeout_count,
+              "ASAN_ERROR_COUNT": int(data.get("error_count", 0)),
+              "ASAN_SHOULD_CREATE_ISSUE": should_create_issue,
+          }
+
+          with open(env_path, "a", encoding="utf-8") as f:
+              for k, v in values.items():
+                  f.write(f"{k}={v}\n")
+          PY
+
+      - name: Create GitHub issue with ASAN deduplicated summary
         continue-on-error: true
         if: always()
         shell: bash
@@ -280,52 +350,177 @@ jobs:
           RUN_NO: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ALERT_GH_USER: ${{ env.ALERT_GH_USER }}
+          INPUT_RUN_SEGMENT: ${{ inputs.run_segment }}
+          INPUT_MAX_SEGMENTS: ${{ inputs.max_segments }}
         run: |
           cd "${FUZZ_DIR}"
 
-          # 1. 统计当前最新的崩溃文件总数
-          total_crashes_now=$(find "${OUTPUT_DIR}"/out_*/crashes -maxdepth 1 -type f ! -name 'README.txt' 2>/dev/null | wc -l || echo 0)
-          
-          # 2. 读取之前记录的基线并计算增量
-          baseline=${BASELINE_CRASHES:-0}
-          new_crashes=$((total_crashes_now - baseline))
-
-          echo "Baseline crashes: ${baseline}"
-          echo "Total crashes now: ${total_crashes_now}"
-          echo "NEW crashes found in this segment: ${new_crashes}"
-
-          # 3. 如果没有新崩溃，直接退出，不发 Issue
-          if [ "${new_crashes}" -le 0 ]; then
-            echo "No NEW crashes found. Skipping GitHub alert."
+          if [ "${ASAN_SHOULD_CREATE_ISSUE:-0}" != "1" ]; then
+            echo "No new unique bugs, no timeouts, and no no-output seeds. Skip issue creation."
             exit 0
           fi
 
-          # 4. 准备 Issue 内容，标注清晰的标识符
-          issue_title="${MAIL_SUBJECT_PREFIX} ${WORKFLOW_LABEL} found ${new_crashes} NEW crashes (Run #${RUN_NO}, Seg ${{ inputs.run_segment }})"
-          issue_body_file="$(mktemp)"
+          report_json="${LOG_DIR}/asan_unique_report.json"
 
-          {
-            echo "🚨 **AFL++ Detected NEW Crashes!**"
-            if [ -n "${ALERT_GH_USER}" ]; then
-              echo "@${ALERT_GH_USER}"
-            fi
-            echo
-            echo "### Fuzzing Segment Details"
-            echo "- **Workflow:** ${WORKFLOW_NAME} (\`${WORKFLOW_LABEL}\`)"
-            echo "- **Run Sequence:** #${RUN_NO}"
-            echo "- **Segment Progress:** ${{ inputs.run_segment }} / ${{ inputs.max_segments }}"
-            echo "- **Target:** ${TARGET_LABEL}"
-            echo "- **New Crashes Discovered:** **${new_crashes}**"
-            echo "- **Cumulative Total Crashes:** ${total_crashes_now}"
-            echo "- [**View GitHub Action Run Here**](${RUN_URL})"
-            echo
-            echo "Please download the \`${RESULT_ARCHIVE_PREFIX}-seg-${{ inputs.run_segment }}\` artifact from the run page to inspect the \`crashes\` directory."
-          } > "${issue_body_file}"
+          if [ ! -f "${report_json}" ]; then
+            echo "ASAN report not found. Skip GitHub issue."
+            exit 0
+          fi
+
+          issue_title="${MAIL_SUBJECT_PREFIX} ${WORKFLOW_LABEL} seg ${{ inputs.run_segment }}: ${ASAN_NEW_UNIQUE_BUG_COUNT:-0} new bug types, ${ASAN_TIMEOUT_COUNT:-0} timeouts, ${ASAN_NO_OUTPUT_COUNT:-0} no-output seeds"
+          issue_body_file="$(mktemp)"
 
           export ISSUE_TITLE="${issue_title}"
           export ISSUE_BODY_FILE="${issue_body_file}"
+          export REPORT_JSON="${report_json}"
 
-          # 5. 调用 GitHub API 发布 Issue
+          python3 - <<'PY'
+          import json
+          import os
+
+          report_path = os.environ["REPORT_JSON"]
+          out_path = os.environ["ISSUE_BODY_FILE"]
+
+          workflow_name = os.environ["WORKFLOW_NAME"]
+          workflow_label = os.environ["WORKFLOW_LABEL"]
+          target_label = os.environ["TARGET_LABEL"]
+          run_no = os.environ["RUN_NO"]
+          run_url = os.environ["RUN_URL"]
+          alert_user = os.environ.get("ALERT_GH_USER", "").strip()
+          run_segment = os.environ["INPUT_RUN_SEGMENT"]
+          max_segments = os.environ["INPUT_MAX_SEGMENTS"]
+          known_summaries_file = os.environ["KNOWN_SUMMARIES_FILE"]
+
+          def read_detail_log_text(path: str) -> str:
+            if not path:
+                return ""
+
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    return f.read().rstrip()
+            except Exception as e:
+                return f"[failed to read ASAN detail log: {e}]"
+
+          with open(report_path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          new_unique_bugs = data.get("new_unique_bugs", [])
+          known_unique_bug_count = data.get("known_unique_bug_count", 0)
+          no_output = data.get("no_output", [])
+          no_summary_with_output = data.get("no_summary_with_output", [])
+          timeouts = data.get("timeouts", [])
+          errors = data.get("errors", [])
+
+          timeout_seed_paths = [item["seed"] for item in timeouts]
+          timeout_seed_dirs = sorted(set(os.path.dirname(p) for p in timeout_seed_paths if p))
+          no_output_seed_paths = [item["seed"] for item in no_output]
+
+          lines = []
+          lines.append("🚨 **AFL++ Segment Finished — ASAN Deduplicated Crash Summary**")
+          if alert_user:
+              lines.append(f"@{alert_user}")
+          lines.append("")
+          lines.append("### Segment Details")
+          lines.append(f"- **Workflow:** {workflow_name} (`{workflow_label}`)")
+          lines.append(f"- **Run Sequence:** #{run_no}")
+          lines.append(f"- **Segment Progress:** {run_segment} / {max_segments}")
+          lines.append(f"- **Target:** {target_label}")
+          lines.append(f"- **Total Crash Seeds in This Segment:** **{data.get('total_seed_files', 0)}**")
+          lines.append(f"- **Unique Bug Types In This Segment:** **{data.get('unique_bug_count', 0)}**")
+          lines.append(f"- **NEW Unique Bug Types In This Segment:** **{data.get('new_unique_bug_count', 0)}**")
+          lines.append(f"- **Already-Known Bug Types Seen Again:** {known_unique_bug_count}")
+          lines.append(f"- **Duplicate Crash Seeds Inside This Segment:** {data.get('duplicate_count', 0)}")
+          lines.append(f"- **No-output Seed Count:** **{data.get('no_output_count', 0)}**")
+          lines.append(f"- **Timeout Seed Count:** **{data.get('timeout_count', 0)}**")
+          lines.append(f"- **No-SUMMARY But Non-empty Output Count:** {data.get('no_summary_with_output_count', 0)}")
+          lines.append(f"- **Classification Execution Error Count:** {data.get('error_count', 0)}")
+          lines.append(f"- **Known Summary Store:** `{known_summaries_file}`")
+          lines.append(f"- [**View GitHub Action Run Here**]({run_url})")
+          lines.append("")
+
+          lines.append("### NEW Deduplicated ASAN Bug Types")
+          if new_unique_bugs:
+            for idx, bug in enumerate(new_unique_bugs, 1):
+                lines.append(f"#### Bug #{idx}")
+                lines.append(f"- **SUMMARY:** `{bug['summary']}`")
+                lines.append(f"- **First Reproducer:** `{bug['first_seed']}`")
+                lines.append(f"- **Matching Crash Seed Count In This Segment:** {bug['seed_count']}")
+                if bug.get("detail_log"):
+                    lines.append(f"- **Saved Full ASAN Log:** `{bug['detail_log']}`")
+                lines.append("")
+                lines.append("**Matching Seed Files:**")
+                lines.append("```text")
+                lines.append(bug["first_seed"])
+                lines.append("```")
+                lines.append("")
+
+                asan_full_output = read_detail_log_text(bug.get("detail_log", ""))
+                lines.append("**Full ASAN Output:**")
+                lines.append("```text")
+                lines.append(asan_full_output if asan_full_output else "[empty ASAN output log]")
+                lines.append("```")
+                lines.append("")
+          else:
+              lines.append("No new unique ASAN bug types were found in this segment.")
+              lines.append("")
+
+          lines.append("### No-output Seeds")
+          if no_output_seed_paths:
+              lines.append(f"- **No-output Seed Count:** {len(no_output_seed_paths)}")
+              lines.append("```text")
+              for seed in no_output_seed_paths:
+                  lines.append(seed)
+              lines.append("```")
+              lines.append("")
+          else:
+              lines.append("- **No-output Seed Count:** 0")
+              lines.append("")
+
+          lines.append("### Classification Timeouts")
+          if timeout_seed_paths:
+              lines.append(f"- **Timeout Seed Count:** {len(timeout_seed_paths)}")
+              lines.append("")
+              lines.append("**Timeout Seed Directories:**")
+              lines.append("```text")
+              for d in timeout_seed_dirs:
+                  lines.append(d)
+              lines.append("```")
+              lines.append("")
+              lines.append("**Timeout Seed Files:**")
+              lines.append("```text")
+              for seed in timeout_seed_paths:
+                  lines.append(seed)
+              lines.append("```")
+              lines.append("")
+          else:
+              lines.append("- **Timeout Seed Count:** 0")
+              lines.append("")
+
+          if no_summary_with_output:
+              lines.append("### No-SUMMARY But Non-empty Output Seeds")
+              lines.append(f"- **Seed Count:** {len(no_summary_with_output)}")
+              lines.append("```text")
+              for item in no_summary_with_output:
+                  lines.append(item["seed"])
+              lines.append("```")
+              lines.append("")
+
+          if errors:
+              lines.append("### Classification Execution Errors")
+              lines.append(f"- **Execution Error Count:** {len(errors)}")
+              lines.append("```text")
+              for item in errors:
+                  lines.append(f"{item['seed']} :: {item['error']}")
+              lines.append("```")
+              lines.append("")
+
+          lines.append(f"Artifact `{os.environ['RESULT_ARCHIVE_PREFIX']}-seg-{run_segment}` contains the full `outputs` directory.")
+          lines.append(f"Artifact `{os.environ['LOG_ARTIFACT_PREFIX']}-seg-{run_segment}` contains logs plus `asan_unique_summary.txt` and `asan_details/`.")
+
+          with open(out_path, "w", encoding="utf-8") as f:
+              f.write("\n".join(lines))
+          PY
+
           python3 - <<'PY'
           import json
           import os
@@ -375,6 +570,44 @@ jobs:
               else:
                   raise
           PY
+
+          if [ "${ASAN_NEW_UNIQUE_BUG_COUNT:-0}" -gt 0 ]; then
+          python3 - <<'PY'
+          import json
+          import os
+
+          report_json = os.path.join(os.environ["LOG_DIR"], "asan_unique_report.json")
+          known_file = os.environ["KNOWN_SUMMARIES_FILE"]
+
+          existing = []
+          existing_set = set()
+
+          if os.path.exists(known_file):
+              with open(known_file, "r", encoding="utf-8", errors="replace") as f:
+                  for line in f:
+                      s = line.strip()
+                      if s and s not in existing_set:
+                          existing.append(s)
+                          existing_set.add(s)
+
+          with open(report_json, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          for bug in data.get("new_unique_bugs", []):
+              s = bug["summary"].strip()
+              if s and s not in existing_set:
+                  existing.append(s)
+                  existing_set.add(s)
+
+          os.makedirs(os.path.dirname(known_file), exist_ok=True)
+          with open(known_file, "w", encoding="utf-8") as f:
+              for s in existing:
+                  f.write(s + "\n")
+
+          print(f"Updated known summary store: {known_file}")
+          print(f"Total known summaries now: {len(existing)}")
+          PY
+            fi
 
       - name: Pack fuzzing results
         if: always()
