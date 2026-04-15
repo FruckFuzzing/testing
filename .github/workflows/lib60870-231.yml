@@ -151,7 +151,7 @@ jobs:
 
           set +e
 
-          timeout 300 env \
+          timeout 21300 env \
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_FINAL_SYNC=1 \
@@ -167,7 +167,7 @@ jobs:
             > "logs/afl-fuzz-out_m0-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
-          timeout 300 env \
+          timeout 21300 env \
             AFL_AUTORESUME=1 \
             AFL_CMPLOG_ONLY_NEW=1 \
             AFL_IMPORT_FIRST=1 \
@@ -184,7 +184,7 @@ jobs:
             > "logs/afl-fuzz-out_s1-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
-          timeout 300 env \
+          timeout 21300 env \
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
@@ -201,7 +201,7 @@ jobs:
             > "logs/afl-fuzz-out_s2-seg-${{ inputs.run_segment }}.log" 2>&1 &
           pids+=($!)
 
-          timeout 300 env \
+          timeout 21300 env \
             AFL_AUTORESUME=1 \
             AFL_IMPORT_FIRST=1 \
             AFL_TESTCACHE_SIZE=200 \
@@ -271,7 +271,6 @@ jobs:
             --output-text "${LOG_DIR}/asan_unique_summary.txt" \
             --details-dir "${LOG_DIR}/asan_details" \
             --known-summaries-file "${KNOWN_SUMMARIES_FILE}" \
-            --arg lo \
             "outputs/out_m0/crashes" \
             "outputs/out_s1/crashes" \
             "outputs/out_s2/crashes" \
