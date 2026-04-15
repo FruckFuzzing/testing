@@ -271,7 +271,7 @@ jobs:
             --output-text "${LOG_DIR}/asan_unique_summary.txt" \
             --details-dir "${LOG_DIR}/asan_details" \
             --known-summaries-file "${KNOWN_SUMMARIES_FILE}" \
-            --arg lo \
+            --arg 8100 \
             "outputs/out_m0/crashes" \
             "outputs/out_s1/crashes" \
             "outputs/out_s2/crashes" \
