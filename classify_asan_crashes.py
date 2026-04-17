@@ -65,25 +65,59 @@ def read_known_summaries(path: str) -> Set[str]:
     return summaries
 
 
-def make_detail_log_path(details_dir: str, idx: int, summary: str) -> str:
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def read_known_output_digests(path_dir: str) -> Set[str]:
+    if not path_dir or not os.path.isdir(path_dir):
+        return set()
+
+    digests: Set[str] = set()
+    for name in sorted(os.listdir(path_dir)):
+        path = os.path.join(path_dir, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            digests.add(sha256_text(content))
+        except OSError:
+            continue
+    return digests
+
+
+def make_summary_detail_log_path(details_dir: str, idx: int, summary: str) -> str:
     digest = hashlib.sha256(summary.encode("utf-8")).hexdigest()[:16]
-    return os.path.join(details_dir, f"bug_{idx:03d}_{digest}.log")
+    return os.path.join(details_dir, f"summary_bug_{idx:03d}_{digest}.log")
+
+
+def make_nonsummary_detail_log_path(details_dir: str, idx: int, output_digest: str) -> str:
+    return os.path.join(details_dir, f"nonsummary_bug_{idx:03d}_{output_digest[:16]}.log")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Classify crash seeds with an ASAN-built binary and deduplicate by ASAN SUMMARY."
+        description=(
+            "Classify crash seeds with an ASAN-built binary and deduplicate by ASAN SUMMARY; "
+            "for outputs without SUMMARY, deduplicate by the full output text."
+        )
     )
     parser.add_argument("--program", required=True, help="Path to ASAN target program")
     parser.add_argument("--arg", action="append", default=[], help="Argument passed to ASAN target, may be repeated")
     parser.add_argument("--timeout", type=int, default=15, help="Per-seed timeout in seconds")
     parser.add_argument("--output-json", required=True, help="Path to JSON report")
     parser.add_argument("--output-text", required=True, help="Path to human-readable summary")
-    parser.add_argument("--details-dir", default="", help="Directory to store first full ASAN log for each unique bug type")
+    parser.add_argument("--details-dir", default="", help="Directory to store first full output log for each unique bug type")
     parser.add_argument(
         "--known-summaries-file",
         default="",
         help="Plain text file containing already-reported ASAN SUMMARY lines, one per line",
+    )
+    parser.add_argument(
+        "--known-outputs-dir",
+        default="",
+        help="Directory containing already-reported full outputs for non-SUMMARY crashes, one file per unique output",
     )
     parser.add_argument("crash_dirs", nargs="+", help="One or more crash directories")
 
@@ -103,15 +137,17 @@ def main() -> int:
 
     seed_files = list_seed_files(args.crash_dirs)
     known_summaries_before = read_known_summaries(args.known_summaries_file)
+    known_output_digests_before = read_known_output_digests(args.known_outputs_dir)
 
-    unique: Dict[str, Dict] = {}
+    unique_summary: Dict[str, Dict] = {}
+    unique_nonsummary: Dict[str, Dict] = {}
     no_output: List[Dict] = []
-    no_summary_with_output: List[Dict] = []
     timeouts: List[Dict] = []
     errors: List[Dict] = []
 
     total = 0
-    duplicate_count = 0
+    summary_duplicate_count = 0
+    nonsummary_duplicate_count = 0
     no_output_count = 0
     no_summary_with_output_count = 0
     timeout_count = 0
@@ -138,8 +174,9 @@ def main() -> int:
             summary = extract_summary(output)
 
             if summary is not None:
-                if summary not in unique:
+                if summary not in unique_summary:
                     bug = {
+                        "bug_kind": "summary",
                         "summary": summary,
                         "first_seed": seed,
                         "seed_count": 1,
@@ -148,15 +185,14 @@ def main() -> int:
                     }
 
                     if args.details_dir:
-                        detail_path = make_detail_log_path(args.details_dir, len(unique) + 1, summary)
+                        detail_path = make_summary_detail_log_path(args.details_dir, len(unique_summary) + 1, summary)
                         write_text(detail_path, output)
                         bug["detail_log"] = detail_path
 
-                    unique[summary] = bug
+                    unique_summary[summary] = bug
                 else:
-                    unique[summary]["seed_count"] += 1
-                    duplicate_count += 1
-
+                    unique_summary[summary]["seed_count"] += 1
+                    summary_duplicate_count += 1
                 continue
 
             if output.strip() == "":
@@ -167,14 +203,29 @@ def main() -> int:
                         "returncode": result.returncode,
                     }
                 )
+                continue
+
+            no_summary_with_output_count += 1
+            output_digest = sha256_text(output)
+            if output_digest not in unique_nonsummary:
+                bug = {
+                    "bug_kind": "nonsummary_output",
+                    "output_digest": output_digest,
+                    "first_seed": seed,
+                    "seed_count": 1,
+                    "returncode": result.returncode,
+                    "detail_log": "",
+                }
+
+                if args.details_dir:
+                    detail_path = make_nonsummary_detail_log_path(args.details_dir, len(unique_nonsummary) + 1, output_digest)
+                    write_text(detail_path, output)
+                    bug["detail_log"] = detail_path
+
+                unique_nonsummary[output_digest] = bug
             else:
-                no_summary_with_output_count += 1
-                no_summary_with_output.append(
-                    {
-                        "seed": seed,
-                        "returncode": result.returncode,
-                    }
-                )
+                unique_nonsummary[output_digest]["seed_count"] += 1
+                nonsummary_duplicate_count += 1
 
         except subprocess.TimeoutExpired as e:
             timeout_count += 1
@@ -197,36 +248,61 @@ def main() -> int:
                 }
             )
 
-    unique_bugs = sorted(unique.values(), key=lambda x: (x["summary"], x["first_seed"]))
+    unique_summary_bugs = sorted(unique_summary.values(), key=lambda x: (x["summary"], x["first_seed"]))
+    unique_nonsummary_bugs = sorted(unique_nonsummary.values(), key=lambda x: (x["output_digest"], x["first_seed"]))
 
-    new_unique_bugs: List[Dict] = []
-    known_unique_bugs: List[Dict] = []
-
-    for bug in unique_bugs:
+    new_unique_summary_bugs: List[Dict] = []
+    known_unique_summary_bugs: List[Dict] = []
+    for bug in unique_summary_bugs:
         if bug["summary"] in known_summaries_before:
-            known_unique_bugs.append(bug)
+            known_unique_summary_bugs.append(bug)
         else:
-            new_unique_bugs.append(bug)
+            new_unique_summary_bugs.append(bug)
+
+    new_unique_nonsummary_bugs: List[Dict] = []
+    known_unique_nonsummary_bugs: List[Dict] = []
+    for bug in unique_nonsummary_bugs:
+        if bug["output_digest"] in known_output_digests_before:
+            known_unique_nonsummary_bugs.append(bug)
+        else:
+            new_unique_nonsummary_bugs.append(bug)
+
+    duplicate_count = summary_duplicate_count + nonsummary_duplicate_count
+    unique_bug_count = len(unique_summary_bugs) + len(unique_nonsummary_bugs)
+    new_unique_bug_count = len(new_unique_summary_bugs) + len(new_unique_nonsummary_bugs)
+    known_unique_bug_count = len(known_unique_summary_bugs) + len(known_unique_nonsummary_bugs)
 
     report = {
         "command": target_cmd,
         "crash_dirs": args.crash_dirs,
         "known_summaries_file": args.known_summaries_file,
+        "known_outputs_dir": args.known_outputs_dir,
         "known_summaries_before_count": len(known_summaries_before),
+        "known_outputs_before_count": len(known_output_digests_before),
         "total_seed_files": total,
-        "unique_bug_count": len(unique_bugs),
-        "new_unique_bug_count": len(new_unique_bugs),
-        "known_unique_bug_count": len(known_unique_bugs),
+        "unique_bug_count": unique_bug_count,
+        "new_unique_bug_count": new_unique_bug_count,
+        "known_unique_bug_count": known_unique_bug_count,
         "duplicate_count": duplicate_count,
+        "summary_duplicate_count": summary_duplicate_count,
+        "nonsummary_duplicate_count": nonsummary_duplicate_count,
         "no_output_count": no_output_count,
         "no_summary_with_output_count": no_summary_with_output_count,
         "timeout_count": timeout_count,
         "error_count": error_count,
-        "unique_bugs": unique_bugs,
-        "new_unique_bugs": new_unique_bugs,
-        "known_unique_bugs": known_unique_bugs,
+        "unique_summary_bug_count": len(unique_summary_bugs),
+        "new_unique_summary_bug_count": len(new_unique_summary_bugs),
+        "known_unique_summary_bug_count": len(known_unique_summary_bugs),
+        "unique_nonsummary_bug_count": len(unique_nonsummary_bugs),
+        "new_unique_nonsummary_bug_count": len(new_unique_nonsummary_bugs),
+        "known_unique_nonsummary_bug_count": len(known_unique_nonsummary_bugs),
+        "unique_summary_bugs": unique_summary_bugs,
+        "new_unique_summary_bugs": new_unique_summary_bugs,
+        "known_unique_summary_bugs": known_unique_summary_bugs,
+        "unique_nonsummary_bugs": unique_nonsummary_bugs,
+        "new_unique_nonsummary_bugs": new_unique_nonsummary_bugs,
+        "known_unique_nonsummary_bugs": known_unique_nonsummary_bugs,
         "no_output": no_output,
-        "no_summary_with_output": no_summary_with_output,
         "timeouts": timeouts,
         "errors": errors,
     }
@@ -237,16 +313,22 @@ def main() -> int:
 
     lines: List[str] = []
     lines.append("=" * 120)
-    lines.append("[ASAN DEDUPLICATED CRASH SUMMARY]")
+    lines.append("[ASAN / UBSAN DEDUPLICATED CRASH SUMMARY]")
     lines.append(f"Target command: {' '.join(target_cmd)}")
     lines.append(f"Crash directories: {', '.join(args.crash_dirs)}")
     lines.append(f"Known summary store: {args.known_summaries_file or '(not set)'}")
+    lines.append(f"Known non-summary output store: {args.known_outputs_dir or '(not set)'}")
     lines.append(f"Known summaries before this run: {len(known_summaries_before)}")
+    lines.append(f"Known non-summary outputs before this run: {len(known_output_digests_before)}")
     lines.append(f"Total crash seeds: {total}")
-    lines.append(f"Unique bug types in this run: {len(unique_bugs)}")
-    lines.append(f"NEW unique bug types in this run: {len(new_unique_bugs)}")
-    lines.append(f"Already-known bug types seen again: {len(known_unique_bugs)}")
+    lines.append(f"Unique bug types in this run: {unique_bug_count}")
+    lines.append(f"NEW unique bug types in this run: {new_unique_bug_count}")
+    lines.append(f"Already-known bug types seen again: {known_unique_bug_count}")
+    lines.append(f"  - Unique SUMMARY bug types: {len(unique_summary_bugs)} (new={len(new_unique_summary_bugs)}, known={len(known_unique_summary_bugs)})")
+    lines.append(f"  - Unique non-SUMMARY output bug types: {len(unique_nonsummary_bugs)} (new={len(new_unique_nonsummary_bugs)}, known={len(known_unique_nonsummary_bugs)})")
     lines.append(f"Duplicate crash seeds inside this run: {duplicate_count}")
+    lines.append(f"  - SUMMARY duplicates: {summary_duplicate_count}")
+    lines.append(f"  - non-SUMMARY output duplicates: {nonsummary_duplicate_count}")
     lines.append(f"No-output seeds: {no_output_count}")
     lines.append(f"No-SUMMARY but non-empty output seeds: {no_summary_with_output_count}")
     lines.append(f"Timeouts: {timeout_count}")
@@ -254,45 +336,69 @@ def main() -> int:
     lines.append("=" * 120)
     lines.append("")
 
-    if new_unique_bugs:
-        lines.append("[NEW unique bug types]")
-        for idx, bug in enumerate(new_unique_bugs, 1):
+    if new_unique_summary_bugs:
+        lines.append("[NEW unique SUMMARY bug types]")
+        for idx, bug in enumerate(new_unique_summary_bugs, 1):
             lines.append("-" * 120)
-            lines.append(f"[New Bug #{idx}]")
+            lines.append(f"[New SUMMARY Bug #{idx}]")
             lines.append(f"SUMMARY: AddressSanitizer: {bug['summary']}")
             lines.append(f"First seed: {bug['first_seed']}")
             lines.append(f"Matching seed count in this run: {bug['seed_count']}")
             if bug.get("detail_log"):
-                lines.append(f"Saved full ASAN log: {bug['detail_log']}")
+                lines.append(f"Saved full output log: {bug['detail_log']}")
             lines.append("")
     else:
-        lines.append("[INFO] No NEW unique bug types in this run.")
+        lines.append("[INFO] No NEW SUMMARY bug types in this run.")
         lines.append("")
 
-    if known_unique_bugs:
-        lines.append("[Already-known bug types seen again]")
-        for idx, bug in enumerate(known_unique_bugs, 1):
+    if new_unique_nonsummary_bugs:
+        lines.append("[NEW unique non-SUMMARY output bug types]")
+        for idx, bug in enumerate(new_unique_nonsummary_bugs, 1):
             lines.append("-" * 120)
-            lines.append(f"[Known Bug #{idx}]")
+            lines.append(f"[New non-SUMMARY Bug #{idx}]")
+            lines.append(f"Output digest: {bug['output_digest']}")
+            lines.append(f"First seed: {bug['first_seed']}")
+            lines.append(f"Matching seed count in this run: {bug['seed_count']}")
+            if bug.get("detail_log"):
+                lines.append(f"Saved full output log: {bug['detail_log']}")
+            lines.append("")
+    else:
+        lines.append("[INFO] No NEW non-SUMMARY output bug types in this run.")
+        lines.append("")
+
+    if known_unique_summary_bugs:
+        lines.append("[Already-known SUMMARY bug types seen again]")
+        for idx, bug in enumerate(known_unique_summary_bugs, 1):
+            lines.append("-" * 120)
+            lines.append(f"[Known SUMMARY Bug #{idx}]")
             lines.append(f"SUMMARY: AddressSanitizer: {bug['summary']}")
             lines.append(f"First seed in this run: {bug['first_seed']}")
             lines.append(f"Matching seed count in this run: {bug['seed_count']}")
             if bug.get("detail_log"):
-                lines.append(f"Saved full ASAN log: {bug['detail_log']}")
+                lines.append(f"Saved full output log: {bug['detail_log']}")
             lines.append("")
     else:
-        lines.append("[INFO] No already-known bug types were re-seen in this run.")
+        lines.append("[INFO] No already-known SUMMARY bug types were re-seen in this run.")
+        lines.append("")
+
+    if known_unique_nonsummary_bugs:
+        lines.append("[Already-known non-SUMMARY output bug types seen again]")
+        for idx, bug in enumerate(known_unique_nonsummary_bugs, 1):
+            lines.append("-" * 120)
+            lines.append(f"[Known non-SUMMARY Bug #{idx}]")
+            lines.append(f"Output digest: {bug['output_digest']}")
+            lines.append(f"First seed in this run: {bug['first_seed']}")
+            lines.append(f"Matching seed count in this run: {bug['seed_count']}")
+            if bug.get("detail_log"):
+                lines.append(f"Saved full output log: {bug['detail_log']}")
+            lines.append("")
+    else:
+        lines.append("[INFO] No already-known non-SUMMARY output bug types were re-seen in this run.")
         lines.append("")
 
     if no_output:
         lines.append("[No-output seeds]")
         for item in no_output:
-            lines.append(f"  - {item['seed']} (returncode={item['returncode']})")
-        lines.append("")
-
-    if no_summary_with_output:
-        lines.append("[No-SUMMARY but non-empty output seeds]")
-        for item in no_summary_with_output:
             lines.append(f"  - {item['seed']} (returncode={item['returncode']})")
         lines.append("")
 
@@ -317,3 +423,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
