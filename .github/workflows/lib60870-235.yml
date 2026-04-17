@@ -1,4 +1,4 @@
-name: lib60870-231
+name: lib60870-235
 
 run-name: ${{ inputs.target_id }} fuzzing [${{ inputs.run_segment }}/${{ inputs.max_segments }}] on ${{ inputs.target_branch }}
 
@@ -14,7 +14,7 @@ on:
       target_id:
         description: "Target/workflow label used across this workflow"
         required: true
-        default: "lib60870-231"
+        default: "lib60870-235"
         type: string
 
       run_segment:
